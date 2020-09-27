@@ -18,6 +18,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include <mariadb/server/mysql.h>
+
 #include "driver-cpu.h"
 #include "miner.h"
 
@@ -105,11 +107,85 @@ static void runhash(void *state, const void *input, const void *init)
 	SHA256_Transform(state, input);
 }
 
+static MYSQL mysql;
+static bool started = false;
+static MYSQL_STMT* stmtBgn;
+static MYSQL_STMT* stmtEnd;
+static MYSQL_STMT* stmtTtl;
+static MYSQL_STMT* stmtHash;
+static MYSQL_BIND bindCnt[ 17 ];
+static MYSQL_BIND bindHash[ 11 ];
+static char rHash[10][65];
+static int ixrHash;
+
+static void show_mysql_error(MYSQL* mysql) {
+  applog( LOG_INFO, "rpb: sha256_cryptopp mysql code (%d) [%s] \"%s\"", 
+                                  mysql_errno(mysql),
+                                  mysql_sqlstate(mysql),
+                                  mysql_error(mysql));
+}
+
+static void show_stmt_error(MYSQL_STMT *stmt) {
+  applog( LOG_INFO, "rpb: sha256_cryptopp mysql stmt (%d) [%s] \"%s\"", 
+                                  mysql_stmt_errno(stmt),
+                                  mysql_stmt_sqlstate(stmt),
+                                  mysql_stmt_error(stmt));
+}
+
+
+bool sql_start() {
+  if ( started ) {
+    //applog( LOG_INFO, "rpb: sha256_cryptopp mysql started" );
+  }
+  else {
+    started = true;
+    mysql_init( &mysql );
+    if ( mysql_real_connect(
+      &mysql,
+      "localhost",
+      "bfgminer", "bfgminer",
+      "bfgminer",
+      0, NULL, 0
+      )
+    ) {
+      applog( LOG_INFO, "rpb: sha256_cryptopp mysql ok %s", mysql_error( &mysql ) );
+
+      stmtBgn  = mysql_stmt_init( &mysql );
+      if ( mysql_stmt_prepare( stmtBgn, "INSERT INTO bgn_cnt VALUES (now(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", -1 ) )
+        show_stmt_error( stmtBgn );
+
+      stmtEnd  = mysql_stmt_init( &mysql );
+      if ( mysql_stmt_prepare( stmtEnd, "INSERT INTO end_cnt VALUES (now(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", -1 ) )
+        show_stmt_error( stmtEnd );
+
+      stmtTtl  = mysql_stmt_init( &mysql );
+      if ( mysql_stmt_prepare( stmtTtl, "INSERT INTO ttl_cnt VALUES (now(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", -1 ) )
+        show_stmt_error( stmtTtl );
+
+      stmtHash = mysql_stmt_init( &mysql );
+      if ( mysql_stmt_prepare( stmtHash, "INSERT INTO hash VALUES (now(),?,?,?,?,?,?,?,?,?,?)", -1 ) )
+        show_stmt_error( stmtHash );
+      
+      for ( int ix = 0; ix < 10; ix++ ) {
+        rHash[ ix ][ 64 ] = 0;  // terminator for each hash string
+      }
+
+    }
+    else {
+      applog( LOG_INFO, "rpb: sha256_cryptopp mysql error %s", mysql_error( &mysql ) );
+    }
+  }
+}
+
 /* suspiciously similar to ScanHash* from bitcoin */
 bool scanhash_cryptopp(struct thr_info * const thr, struct work * const work,
 	        uint32_t max_nonce, uint32_t *last_nonce,
 		uint32_t n)
 {
+        /* custom code */
+        sql_start();
+        /* end */
+
 	const uint8_t *midstate = work->midstate;
 	uint8_t *data = work->data;
 	uint8_t hash1[0x40];
@@ -126,22 +202,128 @@ bool scanhash_cryptopp(struct thr_info * const thr, struct work * const work,
 	LOCAL_swap32le(unsigned char, data, 64/4)
 	uint32_t *nonce_w = (uint32_t *)(data + 12);
 
+        ixrHash = 0;
+        uint32_t count = 0;
+	uint32_t bgn[16];
+	uint32_t end[16];
+	uint32_t cnt[16];
+	for (  int ix = 0; ix < 16; ix++ ) {
+		bgn[ix] = 0;
+		end[ix] = 0;
+		cnt[ix] = 0;
+	}
+
 	while (1) {
 		*nonce_w = n;
 
 		runhash(hash1, data, midstate);
 		runhash(hash, hash1, sha256_init_state);
+                count++;
 
 		if (unlikely((hash32[7] == 0)))
 		{
 			*nonce = htole32(n);
 			*last_nonce = n;
+		        applog( LOG_INFO, "rpb: sha256_cryptopp found %d, %d, %d", n, nonce, max_nonce );
 			return true;
 		}
+
+                uint8_t first = hash[0];
+		first = first >> 4;
+		first = 0x0f & first;
+		bgn[first]++;
+
+		uint8_t last = hash[31];
+		last = 0x0f & last;
+		end[last]++;
+
+		int iy = 0;
+  		for ( int ix = 0; ix < 32; ix++ ) {
+		  uint8_t value = hash[ix];
+		  uint8_t upper = value >> 4;
+		  upper = upper & 0x0f;
+		  cnt[upper]++;
+                  if ( ixrHash < 10 ) {
+		    rHash[ixrHash][iy] = ( 9 >= upper ) ? '0' + upper : 'a' + upper - 10;
+                  }
+		  iy++;
+		  uint8_t lower = value & 0x0f;
+		  cnt[lower]++;
+                  if ( ixrHash < 10 ) {
+		    rHash[ixrHash][iy] = ( 9 >= lower ) ? '0' + lower : 'a' + lower - 10;
+                  }
+		  iy++;
+		} 
+                ixrHash++;
+
+		/* applog( LOG_INFO, "rpb: sha256_cryptopp %d, %d, %s", n, max_nonce, hex ); */
+		/* applog( LOG_INFO, "rpb: sha256_cryptopp %d, %d", n, max_nonce ); */
 
 		if ((n >= max_nonce) || thr->work_restart) {
 			*nonce = htole32(n);
 			*last_nonce = n;
+		        applog( LOG_INFO, "rpb: sha256_cryptopp interval: #hashes=%d, n=%d, nonce=%d, max_nonce=%d", count, n, nonce, max_nonce );
+			applog( LOG_INFO, "rpb: sha256_cryptopp bgn: %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d",
+					  bgn[0], bgn[1], bgn[2], bgn[3], bgn[4], bgn[5], bgn[6], bgn[7], bgn[8], bgn[9],
+					  bgn[10], bgn[11], bgn[12], bgn[13], bgn[14], bgn[15] );
+
+                        memset( bindCnt, 0, sizeof( MYSQL_BIND) * 16 );
+                        for ( int ix = 0; ix < 16; ix++ ) {
+                          bindCnt[ ix ].buffer_type = MYSQL_TYPE_LONG;
+                          bindCnt[ ix ].buffer = &bgn[ ix ];
+                          bindCnt[ ix ].param_number = ix + 1;
+                        }
+                        mysql_stmt_bind_param( stmtBgn, bindCnt );
+                        if ( mysql_stmt_execute( stmtBgn ) ) {
+                          show_stmt_error( stmtBgn );
+                        }
+
+			applog( LOG_INFO, "rpb: sha256_cryptopp end: %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d",
+					  end[0], end[1], end[2], end[3], end[4], end[5], end[6], end[7], end[8], end[9],
+					  end[10], end[11], end[12], end[13], end[14], end[15] );
+
+                        memset( bindCnt, 0, sizeof( MYSQL_BIND) * 16 );
+                        for ( int ix = 0; ix < 16; ix++ ) {
+                          bindCnt[ ix ].buffer_type = MYSQL_TYPE_LONG;
+                          bindCnt[ ix ].buffer = &end[ ix ];
+                          bindCnt[ ix ].param_number = ix + 1;
+                        }
+                        mysql_stmt_bind_param( stmtEnd, bindCnt );
+                        if ( mysql_stmt_execute( stmtEnd ) ) {
+                          show_stmt_error( stmtEnd );
+                        }
+
+			applog( LOG_INFO, "rpb: sha256_cryptopp cnt: %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d",
+					  cnt[0], cnt[1], cnt[2], cnt[3], cnt[4], cnt[5], cnt[6], cnt[7], cnt[8], cnt[9],
+					  cnt[10], cnt[11], cnt[12], cnt[13], cnt[14], cnt[15] );
+
+                        memset( bindCnt, 0, sizeof( MYSQL_BIND ) * 16 );
+                        for ( int ix = 0; ix < 16; ix++ ) {
+                          bindCnt[ ix ].buffer_type = MYSQL_TYPE_LONG;
+                          bindCnt[ ix ].buffer = &cnt[ ix ];
+                          bindCnt[ ix ].param_number = ix + 1;
+                        }
+                        mysql_stmt_bind_param( stmtTtl, bindCnt );
+                        if ( mysql_stmt_execute( stmtTtl ) ) {
+                          show_stmt_error( stmtTtl );
+                        }
+  
+                        if ( ixrHash >= 10 ) {
+                          unsigned long length = 64;
+                          memset( bindHash, 0, sizeof( MYSQL_BIND ) * 10 );
+                          for ( int ix = 0; ix < 10; ix++ ) {
+                            bindHash[ ix ].buffer_type = MYSQL_TYPE_STRING;
+                            bindHash[ ix ].buffer = (char*) &rHash[ix];
+                            bindHash[ ix ].buffer_length = 64;
+                            bindHash[ ix ].length = &length;
+                            bindHash[ ix ].param_number = ix + 1;
+                          }
+                          mysql_stmt_bind_param( stmtHash, bindHash );
+                          if ( mysql_stmt_execute( stmtHash ) ) {
+                            show_stmt_error( stmtHash );
+                          }
+                        }
+
 			return false;
 		}
 

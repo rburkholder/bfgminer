@@ -1,0 +1,86 @@
+select user from mysql.user;
+create user bfgminer@localhost identified by 'bfgminer';
+select user from mysql.user;
+
+show databases;
+create database if not exists bfgminer;
+show create database bfgminer;
+
+grant all privileges on bfgminer.* to bfgminer@localhost;
+use bfgminer;
+
+create table bgn_cnt (
+  dt TIMESTAMP,
+  dig0 INT,
+  dig1 INT,
+  dig2 INT,
+  dig3 INT,
+  dig4 INT,
+  dig5 INT,
+  dig6 INT,
+  dig7 INT,
+  dig8 INT,
+  dig9 INT,
+  diga INT,
+  digb INT,
+  digc INT,
+  digd INT,
+  dige INT,
+  digf INT
+  );
+
+create table end_cnt (
+  dt TIMESTAMP,
+  dig0 INT,
+  dig1 INT,
+  dig2 INT,
+  dig3 INT,
+  dig4 INT,
+  dig5 INT,
+  dig6 INT,
+  dig7 INT,
+  dig8 INT,
+  dig9 INT,
+  diga INT,
+  digb INT,
+  digc INT,
+  digd INT,
+  dige INT,
+  digf INT
+  );
+
+create table ttl_cnt (
+  dt TIMESTAMP,
+  dig0 INT,
+  dig1 INT,
+  dig2 INT,
+  dig3 INT,
+  dig4 INT,
+  dig5 INT,
+  dig6 INT,
+  dig7 INT,
+  dig8 INT,
+  dig9 INT,
+  diga INT,
+  digb INT,
+  digc INT,
+  digd INT,
+  dige INT,
+  digf INT
+  );
+
+create table hash (
+  dt TIMESTAMP,
+  hash01 char(64),
+  hash02 char(64),
+  hash03 char(64),
+  hash04 char(64),
+  hash05 char(64),
+  hash06 char(64),
+  hash07 char(64),
+  hash08 char(64),
+  hash09 char(64),
+  hash10 char(64)
+  );
+
+

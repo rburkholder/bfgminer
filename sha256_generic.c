@@ -255,23 +255,29 @@ bool scanhash_c(struct thr_info * const thr, struct work * const work,
 	LOCAL_swap32le(unsigned char, data, 64/4)
 	uint32_t *nonce_w = (uint32_t *)(data + 12);
 
+	//applog( LOG_INFO, "rpb: scanhash_c 1" );
+
 	while (1) {
 		*nonce_w = n;
 
 		// runhash expects int32 data preprocessed into native endian
 		runhash(hash1, data, midstate);
 		runhash(hash, hash1, sha256_init_state);
-
+		
 		stat_ctr++;
 
 		if (unlikely(hash32[7] == 0))
 		{
+	            applog( LOG_INFO, "rpb: scanhash_c unlikely 0" );
 			*nonce = htole32(n);
 			*last_nonce = n;
 			return true;
 		}
 
+         	//applog( LOG_INFO, "rpb: scanhash_c 2 %d, %d", n, max_nonce );
+
 		if ((n >= max_nonce) || thr->work_restart) {
+	            applog( LOG_INFO, "rpb: scanhash_c unlikely 1" );
 			*nonce = htole32(n);
 			*last_nonce = n;
 			return false;

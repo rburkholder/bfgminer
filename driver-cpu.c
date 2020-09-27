@@ -200,6 +200,8 @@ double bench_algo_stage3(
 	uint32_t max_nonce = opt_algo == ALGO_FASTAUTO ? (1<<8) : (1<<22);
 	uint32_t last_nonce = 0;
 
+	applog(LOG_INFO, "rpb: bench_algo_stage3 algo=%d, max_nonce=%d, last_nonce=%d", algo, max_nonce, last_nonce );
+
 	timer_set_now(&start);
 			{
 				sha256_func func = sha256_funcs[algo];
@@ -619,6 +621,10 @@ static enum sha256_algos pick_fastest_algo()
 		name_spaces_pad,
 		best_rate
 	);
+
+        // override with hard-code:
+        return ALGO_CRYPTOPP;
+
 	return best_algo;
 }
 
@@ -750,6 +756,8 @@ static bool cpu_thread_init(struct thr_info *thr)
 	mutex_unlock(&cpualgo_lock);
 
 	cgpu->kname = algo_names[opt_algo];
+	applog( LOG_INFO, "rpb: algo %s", cgpu->kname );
+
 #endif
 	
 	/* Set worker threads to nice 19 and then preferentially to SCHED_IDLE
@@ -812,9 +820,12 @@ static int64_t cpu_scanhash(struct thr_info *thr, struct work *work, int64_t max
 	uint32_t last_nonce;
 	bool rc;
 
+	applog(LOG_INFO, "rpb: cpu_scanhash max_nonce=%d, first_nonce=%d" );
 CPUSearch:
 	last_nonce = first_nonce;
 	rc = false;
+
+	//applog(LOG_INFO, "rpb: cpu_scanhash 2" );
 
 	/* scan nonces for a proof-of-work hash */
 	{
@@ -848,7 +859,7 @@ CPUSearch:
 
 	/* if nonce found, submit work */
 	if (unlikely(rc)) {
-		applog(LOG_DEBUG, "%"PRIpreprv" found something?", thr->cgpu->proc_repr);
+		applog(LOG_INFO, "%"PRIpreprv" found something?", thr->cgpu->proc_repr);
 		submit_nonce(thr, work, le32toh(*(uint32_t*)&work->data[76]));
 		work->blk.nonce = last_nonce + 1;
 		goto CPUSearch;
